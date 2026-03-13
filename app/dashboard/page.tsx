@@ -6,20 +6,21 @@ import Papa from 'papaparse'
 import { useVinora } from '@/lib/store'
 import { runSegmentation, fmt, SEGMENT_COLORS, SEGMENT_TEXT_COLORS } from '@/lib/rfm'
 import { initAutoEvents } from '@/lib/events'
-import type { RawCsvRow } from '@/types/customer'
+import type { RawCsvRow, RawWineCsvRow, WineProduct } from '@/types/customer'
 import { DEMO_ROWS } from '@/lib/demo-data'
 import { motion } from 'framer-motion'
 import {
   Upload, Users, TrendingUp, AlertTriangle, Zap, ArrowUp,
-  BarChart3, Activity
+  BarChart3, Activity, Wine, CheckCircle2, X
 } from 'lucide-react'
 
 const SEGMENTS = ['Top-Kunde','Loyal','Gefährdet','Eingeschlafen','Neukunde/Selten','Wachsend']
 
 export default function UebersichtPage() {
-  const { customers, setCustomers, settings, events, setEvents } = useVinora()
+  const { customers, setCustomers, settings, events, setEvents, wineProducts, setWineProducts } = useVinora()
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const wineInputRef = useRef<HTMLInputElement>(null)
 
   const processRows = useCallback((rows: RawCsvRow[]) => {
     const cs = runSegmentation(rows, settings)
@@ -37,12 +38,34 @@ export default function UebersichtPage() {
     })
   }
 
+  function handleWineFile(file: File) {
+    Papa.parse<RawWineCsvRow>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const wines: WineProduct[] = results.data
+          .filter(r => r.Weinname)
+          .map((r, i) => ({
+            id: `wine_${i}`,
+            weinname: r.Weinname?.trim() ?? '',
+            sorte: r.Sorte?.trim() ?? '',
+            preis: parseFloat(r.Preis_EUR?.replace(',', '.') ?? '0') || 0,
+            kategorie: r.Kategorie?.trim() ?? '',
+            jahrgang: r.Jahrgang?.trim() || undefined,
+            beschreibung: r.Beschreibung?.trim() || undefined,
+          }))
+        setWineProducts(wines)
+      },
+    })
+  }
+
   function loadDemo() {
     processRows(DEMO_ROWS)
   }
 
   const hasData = customers.length > 0
 
+  // KPIs
   const totalClv = customers.reduce((s, c) => s + c.clv, 0)
   const sofort = customers.filter(c => c.prioScore >= 100).length
   const frühwarnungen = customers.filter(c => c.risikoSignal !== 'Keins').length
@@ -51,6 +74,7 @@ export default function UebersichtPage() {
   const cntB = customers.filter(c => c.abGroup === 'B').length
   const total = customers.length || 1
 
+  // CLV share per segment (for bar visualization)
   const totalClvAll = customers.reduce((s, c) => s + c.clv, 0) || 1
 
   const kpiContainerVariants = {
@@ -79,6 +103,7 @@ export default function UebersichtPage() {
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
+      {/* Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-[#1C0A0F]" style={{ fontFamily: 'Playfair Display, Georgia, serif' }}>
           Übersicht
@@ -89,48 +114,53 @@ export default function UebersichtPage() {
       </div>
 
       {!hasData ? (
+        /* Upload Screen – zwei Fenster */
         <motion.div
           className="flex flex-col items-center justify-center min-h-[60vh] gap-6"
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5 }}
         >
-          <div
-            className="w-full max-w-lg border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all hover:shadow-xl hover:-translate-y-0.5"
-            style={{ borderColor: '#C9A84C', background: '#FFFFFF' }}
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = '#6B2737' }}
-            onDragLeave={e => { e.currentTarget.style.borderColor = '#C9A84C' }}
-            onDrop={e => {
-              e.preventDefault()
-              e.currentTarget.style.borderColor = '#C9A84C'
-              const file = e.dataTransfer.files[0]
-              if (file) handleFile(file)
-            }}
-          >
-            <div className="relative mx-auto mb-5 w-20 h-20 flex items-center justify-center">
-              <div className="absolute inset-0 rounded-full opacity-20 animate-pulse" style={{ background: 'radial-gradient(circle, #C9A84C, transparent)' }} />
-              <svg width="44" height="56" viewBox="0 0 44 56" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <ellipse cx="22" cy="18" rx="14" ry="16" stroke="#6B2737" strokeWidth="2" fill="#FFF0E8" />
-                <path d="M8 18 Q8 36 22 38 Q36 36 36 18" fill="#C9A84C" fillOpacity="0.25" />
-                <line x1="22" y1="38" x2="22" y2="52" stroke="#6B2737" strokeWidth="2" strokeLinecap="round" />
-                <ellipse cx="22" cy="52" rx="10" ry="2.5" stroke="#6B2737" strokeWidth="1.5" fill="none" />
-              </svg>
-            </div>
-            <h2 className="text-lg font-semibold text-[#1C0A0F] mb-1" style={{ fontFamily: 'Playfair Display, Georgia, serif' }}>
-              Kundendaten importieren
-            </h2>
-            <p className="text-sm text-[#8B6070] mb-5 leading-relaxed">
-              CSV-Datei hierher ziehen oder auswählen.<br />
-              <span className="text-xs text-[#B09090]">Felder: Customer ID, Vorname, Nachname, Email, Kaufdatum, Wein, Anzahl_Flaschen, Gesamtpreis_EUR, Weg_der_Bestellung, Wohnort</span>
+          <div className="w-full max-w-3xl">
+            <p className="text-sm text-[#8B6070] text-center mb-5">
+              Kundendaten sind <span className="font-semibold text-[#6B2737]">Pflicht</span> · Weinkatalog ist optional
             </p>
-            <button
-              className="px-6 py-2.5 rounded-xl text-white text-sm font-medium cursor-pointer transition-all hover:opacity-90"
-              style={{ background: 'linear-gradient(135deg, #6B2737, #8B3348)' }}
-            >
-              Datei auswählen
-            </button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              {/* Window 1 – Kundendaten */}
+              <UploadWindow
+                title="Kundendaten"
+                subtitle="Bestellhistorie importieren"
+                hint="Felder: Customer ID, Vorname, Nachname, Email, Kaufdatum, Wein, Anzahl_Flaschen, Gesamtpreis_EUR, Weg_der_Bestellung, Wohnort"
+                icon={
+                  <svg width="36" height="46" viewBox="0 0 44 56" fill="none">
+                    <ellipse cx="22" cy="18" rx="14" ry="16" stroke="#6B2737" strokeWidth="2" fill="#FFF0E8" />
+                    <path d="M8 18 Q8 36 22 38 Q36 36 36 18" fill="#C9A84C" fillOpacity="0.25" />
+                    <line x1="22" y1="38" x2="22" y2="52" stroke="#6B2737" strokeWidth="2" strokeLinecap="round" />
+                    <ellipse cx="22" cy="52" rx="10" ry="2.5" stroke="#6B2737" strokeWidth="1.5" fill="none" />
+                  </svg>
+                }
+                accentColor="#6B2737"
+                onFile={handleFile}
+                inputRef={fileInputRef}
+                required
+              />
+
+              {/* Window 2 – Weinkatalog */}
+              <UploadWindow
+                title="Weinkatalog"
+                subtitle={wineProducts.length > 0 ? `✓ ${wineProducts.length} Weine geladen` : 'Sortiment importieren (optional)'}
+                hint="Felder: Weinname, Sorte, Preis_EUR, Kategorie, Jahrgang, Beschreibung"
+                icon={<Wine size={36} color="#C9A84C" />}
+                accentColor="#C9A84C"
+                onFile={handleWineFile}
+                inputRef={wineInputRef}
+                loaded={wineProducts.length > 0}
+                onClear={() => setWineProducts([])}
+              />
+            </div>
           </div>
+
           <div className="flex items-center gap-3 text-sm text-[#8B6070]">
             <div className="w-16 h-px bg-[#E8D5C0]" />
             oder
@@ -144,6 +174,7 @@ export default function UebersichtPage() {
             🧪 Demo-Daten laden (10 Beispiel-Kunden)
           </button>
           <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]) }} />
+          <input ref={wineInputRef} type="file" accept=".csv" className="hidden" onChange={e => { if (e.target.files?.[0]) handleWineFile(e.target.files[0]) }} />
         </motion.div>
       ) : (
         <>
@@ -199,6 +230,7 @@ export default function UebersichtPage() {
                       <div className="text-2xl font-bold" style={{ color: SEGMENT_TEXT_COLORS[seg] }}>{cs.length}</div>
                       <div className="text-xs mt-1" style={{ color: SEGMENT_TEXT_COLORS[seg], opacity: 0.75 }}>CLV ∅ {fmt(avgC)}</div>
                     </div>
+                    {/* CLV share bar */}
                     <div className="px-4 pb-3">
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-[10px]" style={{ color: SEGMENT_TEXT_COLORS[seg], opacity: 0.6 }}>CLV-Anteil</span>
@@ -223,6 +255,7 @@ export default function UebersichtPage() {
 
           {/* A/B Test + Signale */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            {/* A/B */}
             <div className="bg-white rounded-xl p-5 border border-[#E8D5C0] shadow-sm">
               <div className="flex items-center gap-2 mb-4">
                 <BarChart3 size={16} color="#6B2737" />
@@ -253,6 +286,7 @@ export default function UebersichtPage() {
               </div>
             </div>
 
+            {/* Signale Summary */}
             <div className="bg-white rounded-xl p-5 border border-[#E8D5C0] shadow-sm">
               <div className="flex items-center gap-2 mb-4">
                 <Activity size={16} color="#6B2737" />
@@ -279,21 +313,124 @@ export default function UebersichtPage() {
             </div>
           </div>
 
-          <div className="flex gap-3">
+          {/* Actions bar */}
+          <div className="flex flex-wrap gap-3 items-center">
             <button
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer border transition-all hover:shadow-sm"
               style={{ borderColor: '#E8D5C0', color: '#6B4A50', background: 'white' }}
             >
-              <Upload size={14} /> Neue CSV laden
+              <Upload size={14} /> Kundendaten neu laden
             </button>
+            {wineProducts.length > 0 ? (
+              <div className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border"
+                style={{ borderColor: '#C9A84C', color: '#7a5800', background: '#FFFAEE' }}>
+                <CheckCircle2 size={14} style={{ color: '#C9A84C' }} />
+                {wineProducts.length} Weine geladen
+                <button
+                  onClick={() => wineInputRef.current?.click()}
+                  className="underline text-xs text-[#8B6070] cursor-pointer hover:text-[#6B2737]"
+                >neu laden</button>
+                <button onClick={() => setWineProducts([])} className="cursor-pointer hover:text-red-600">
+                  <X size={12} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => wineInputRef.current?.click()}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer border transition-all hover:shadow-sm"
+                style={{ borderColor: '#C9A84C', color: '#7a5800', background: 'white' }}
+              >
+                <Wine size={14} /> Weinkatalog laden
+              </button>
+            )}
             <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]) }} />
+            <input ref={wineInputRef} type="file" accept=".csv" className="hidden" onChange={e => { if (e.target.files?.[0]) handleWineFile(e.target.files[0]) }} />
           </div>
         </>
       )}
     </div>
   )
 }
+
+// ─── UploadWindow ─────────────────────────────────────────────────────────────
+
+function UploadWindow({
+  title, subtitle, hint, icon, accentColor, onFile, inputRef, required, loaded, onClear,
+}: {
+  title: string
+  subtitle: string
+  hint: string
+  icon: React.ReactNode
+  accentColor: string
+  onFile: (f: File) => void
+  inputRef: React.RefObject<HTMLInputElement | null>
+  required?: boolean
+  loaded?: boolean
+  onClear?: () => void
+}) {
+  return (
+    <motion.div
+      whileHover={{ y: -3, boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}
+      transition={{ duration: 0.15 }}
+      className="relative border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all bg-white"
+      style={{ borderColor: loaded ? accentColor : '#E8D5C0' }}
+      onClick={() => inputRef.current?.click()}
+      onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = accentColor }}
+      onDragLeave={e => { e.currentTarget.style.borderColor = loaded ? accentColor : '#E8D5C0' }}
+      onDrop={e => {
+        e.preventDefault()
+        e.currentTarget.style.borderColor = loaded ? accentColor : '#E8D5C0'
+        const file = e.dataTransfer.files[0]
+        if (file) onFile(file)
+      }}
+    >
+      {required && (
+        <span className="absolute top-3 right-3 text-[10px] px-2 py-0.5 rounded-full font-semibold"
+          style={{ background: '#6B273710', color: '#6B2737' }}>Pflicht</span>
+      )}
+      {loaded && onClear && (
+        <button
+          className="absolute top-3 right-3 w-6 h-6 flex items-center justify-center rounded-full cursor-pointer hover:bg-red-50 hover:text-red-600 transition-colors"
+          style={{ color: '#8B6070' }}
+          onClick={e => { e.stopPropagation(); onClear() }}
+        >
+          <X size={12} />
+        </button>
+      )}
+
+      <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
+        style={{ background: `${accentColor}10` }}>
+        {loaded
+          ? <CheckCircle2 size={32} style={{ color: accentColor }} />
+          : icon}
+      </div>
+
+      <h3 className="text-base font-semibold text-[#1C0A0F] mb-1"
+        style={{ fontFamily: 'Playfair Display, Georgia, serif' }}>
+        {title}
+      </h3>
+      <p className="text-sm mb-4" style={{ color: loaded ? accentColor : '#8B6070', fontWeight: loaded ? 600 : 400 }}>
+        {subtitle}
+      </p>
+
+      {!loaded && (
+        <>
+          <p className="text-[11px] text-[#B09090] mb-5 leading-relaxed">{hint}</p>
+          <button
+            className="px-5 py-2 rounded-xl text-white text-sm font-medium cursor-pointer transition-all hover:opacity-90"
+            style={{ background: `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)` }}
+            onClick={e => { e.stopPropagation(); inputRef.current?.click() }}
+          >
+            CSV auswählen
+          </button>
+        </>
+      )}
+    </motion.div>
+  )
+}
+
+// ─── KpiCard ──────────────────────────────────────────────────────────────────
 
 function KpiCard({ icon, label, value, color, alert = false }: {
   icon: React.ReactNode; label: string; value: string; color: string; alert?: boolean
@@ -303,6 +440,7 @@ function KpiCard({ icon, label, value, color, alert = false }: {
       className="bg-white rounded-xl border shadow-sm overflow-hidden hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-default"
       style={{ borderColor: alert ? color : '#E8D5C0' }}
     >
+      {/* Top color stripe */}
       <div className="h-1 rounded-t-xl" style={{ background: color }} />
       <div className="p-4">
         <div className="flex items-center gap-2 mb-2">

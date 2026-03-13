@@ -1,3 +1,24 @@
+// Wine catalog – uploaded separately (Simon liefert die Daten)
+export interface RawWineCsvRow {
+  Weinname: string
+  Sorte: string
+  Preis_EUR: string
+  Kategorie: string
+  Jahrgang?: string
+  Beschreibung?: string
+}
+
+export interface WineProduct {
+  id: string
+  weinname: string
+  sorte: string
+  preis: number
+  kategorie: string
+  jahrgang?: string
+  beschreibung?: string
+}
+
+// Input-Spezifikation (definiert im Meeting 6. März 2026 mit Simon)
 export interface RawCsvRow {
   'Customer ID': string
   Vorname: string
@@ -20,10 +41,17 @@ export interface OrderItem {
   flaschen: number
 }
 
-export type Segment = 'Top-Kunde' | 'Loyal' | 'Gef\u00e4hrdet' | 'Eingeschlafen' | 'Neukunde/Selten' | 'Wachsend'
+export type Segment =
+  | 'Top-Kunde'
+  | 'Loyal'
+  | 'Gefährdet'
+  | 'Eingeschlafen'
+  | 'Neukunde/Selten'
+  | 'Wachsend'
+
 export type ClvTier = 'A' | 'B' | 'C'
 export type AbGroup = 'A' | 'B'
-export type RisikoSignal = 'Keins' | 'Fr\u00fchwarnung' | 'Akut gef\u00e4hrdet'
+export type RisikoSignal = 'Keins' | 'Frühwarnung' | 'Akut gefährdet'
 export type UpsellingSignal = 'Keins' | 'Frequenz gestiegen' | 'Preis-Upgrade' | 'Neue Sorte'
 
 export interface WineRecommendation {
@@ -33,11 +61,14 @@ export interface WineRecommendation {
 }
 
 export interface Customer {
+  // Identifikation
   id: string
   vorname: string
   nachname: string
   email: string
   wohnort: string
+
+  // Kaufhistorie
   orders: OrderItem[]
   totalRevenue: number
   orderCount: number
@@ -48,20 +79,32 @@ export interface Customer {
   bevKanal: string
   kaufsaison: string
   durchschnBestellwert: number
+
+  // RFM Scores (1–5)
   rScore: number
   fScore: number
   mScore: number
   rfmTotal: number
+
+  // CLV
   kundenjahre: number
   clv: number
   clvTier: ClvTier
+
+  // Segmentierung
   segment: Segment
   prioScore: number
+
+  // Signale (Simon's Analytics)
   risikoSignal: RisikoSignal
   upsellingSignal: UpsellingSignal
   empfohleneWeine: WineRecommendation[]
+
+  // Marketing
   massnahmenTyp: string
   abGroup: AbGroup
+
+  // Feedback-Loop
   lastActionSentAt?: string
   lastActionOutcome?: 'ausstehend' | 'positiv' | 'negativ' | 'keine_reaktion'
 }
@@ -78,7 +121,7 @@ export interface KpiData {
   totalCustomers: number
   totalClv: number
   sofortAktionen: number
-  fr\u00fchwarnungen: number
+  frühwarnungen: number
   upsellingPotenziale: number
   abCountA: number
   abCountB: number
