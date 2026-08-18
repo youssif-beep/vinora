@@ -107,6 +107,11 @@ function KundenPageInner() {
       segment: c.segment,
       rfm_score: { recency: c.rScore, frequency: c.fScore, monetary: c.mScore, total: c.rfmTotal },
       customer_lifetime_value: Math.round(c.clv),
+      clv_prognose: Math.round(c.clvPrognose ?? 0),
+      kaufintervall_tage: c.kaufintervallTage ? Math.round(c.kaufintervallTage) : null,
+      ueberfaellig_faktor: Math.round((c.ueberfaelligFaktor ?? 0) * 100) / 100,
+      naechster_kauf_erwartet: fmtDate(c.naechsterKaufErwartet),
+      abwanderungsrisiko_prozent: Math.round((c.churnRisiko ?? 0) * 100),
       risiko_signal: c.risikoSignal,
       upselling_signal: c.upsellingSignal,
       empfohlene_massnahme: c.massnahmenTyp,
@@ -195,7 +200,8 @@ function KundenPageInner() {
                   { col: 'vorname',        label: 'Name' },
                   { col: 'segment',        label: 'Segment' },
                   { col: 'clvTier',        label: 'Tier / RFM' },
-                  { col: 'clv',            label: 'CLV' },
+                  { col: 'clvPrognose',    label: 'CLV-Prognose' },
+                  { col: 'churnRisiko',    label: 'Rhythmus' },
                   { col: 'risikoSignal',   label: 'Risiko' },
                   { col: 'upsellingSignal',label: 'Upselling' },
                   { col: 'lieblingssorte', label: 'Lieblingssorte' },
@@ -210,7 +216,7 @@ function KundenPageInner() {
             </thead>
             <motion.tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-12 text-[#8B6070] italic">Keine Kunden gefunden.</td></tr>
+                <tr><td colSpan={9} className="text-center py-12 text-[#8B6070] italic">Keine Kunden gefunden.</td></tr>
               ) : filtered.map((c, i) => {
                 const isSelected = selected?.id === c.id
                 const prioColor = c.prioScore >= 100 ? '#c0392b' : c.prioScore >= 70 ? '#e67e22' : c.prioScore >= 40 ? '#f39c12' : '#27ae60'
@@ -253,7 +259,22 @@ function KundenPageInner() {
                         <RfmMiniScores r={c.rScore} f={c.fScore} m={c.mScore} />
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-[#1C0A0F] font-medium">{fmt(c.clv)}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-[#1C0A0F]">{fmt(c.clvPrognose ?? c.clv)}</div>
+                      <div className="text-[10px] text-[#8B6070]">bisher {fmt(c.totalRevenue)}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {c.kaufintervallTage ? (
+                        <div>
+                          <div className="text-xs text-[#1C0A0F]">alle {Math.round(c.kaufintervallTage)} T</div>
+                          <div className="text-[10px]" style={{ color: c.ueberfaelligFaktor >= 2 ? '#c0392b' : c.ueberfaelligFaktor >= 1.5 ? '#e67e22' : '#27ae60' }}>
+                            {c.ueberfaelligFaktor >= 1 ? `${c.ueberfaelligFaktor.toFixed(1)}× überfällig` : 'im Takt'}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-[#8B6070]">Einmalkäufer</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3"><RisikoIndicator signal={c.risikoSignal} /></td>
                     <td className="px-4 py-3"><UpsellingIndicator signal={c.upsellingSignal} /></td>
                     <td className="px-4 py-3 text-[#6B4A50] text-xs">{c.lieblingssorte}</td>
@@ -433,7 +454,14 @@ function KundenPageInner() {
               </section>
 
               <section className="text-xs text-[#8B6070] leading-relaxed pb-4">
-                <div><span className="font-medium">CLV:</span> {fmt(selected.clv)} · <span className="font-medium">Ø Bestellwert:</span> {fmt(selected.durchschnBestellwert)}</div>
+                <div><span className="font-medium">CLV-Prognose:</span> {fmt(selected.clvPrognose ?? selected.clv)} · <span className="font-medium">Ø Bestellwert:</span> {fmt(selected.durchschnBestellwert)}</div>
+                <div>
+                  <span className="font-medium">Kaufrhythmus:</span>{' '}
+                  {selected.kaufintervallTage
+                    ? `alle ${Math.round(selected.kaufintervallTage)} Tage · nächste Bestellung erwartet ${fmtDate(selected.naechsterKaufErwartet)}`
+                    : 'noch kein Rhythmus erkennbar (Einmalkäufer)'}
+                </div>
+                <div><span className="font-medium">Abwanderungsrisiko:</span> {Math.round((selected.churnRisiko ?? 0) * 100)} %</div>
                 <div><span className="font-medium">Kundenjahre:</span> {selected.kundenjahre.toFixed(1)} · <span className="font-medium">Kanal:</span> {selected.bevKanal}</div>
                 <div><span className="font-medium">Saison:</span> {selected.kaufsaison} · <span className="font-medium">Email:</span> {selected.email || '–'}</div>
               </section>

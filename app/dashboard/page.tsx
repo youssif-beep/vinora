@@ -4,7 +4,8 @@ import { useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Papa from 'papaparse'
 import { useVinora } from '@/lib/store'
-import { runSegmentation, fmt, SEGMENT_COLORS, SEGMENT_TEXT_COLORS } from '@/lib/rfm'
+import { fmt, SEGMENT_COLORS, SEGMENT_TEXT_COLORS } from '@/lib/rfm'
+import { gefaehrdeterUmsatz } from '@/lib/analytics'
 import { initAutoEvents } from '@/lib/events'
 import type { RawCsvRow, RawWineCsvRow, WineProduct } from '@/types/customer'
 import { DEMO_ROWS } from '@/lib/demo-data'
@@ -17,18 +18,16 @@ import {
 const SEGMENTS = ['Top-Kunde','Loyal','Gefährdet','Eingeschlafen','Neukunde/Selten','Wachsend']
 
 export default function UebersichtPage() {
-  const { customers, setCustomers, settings, events, setEvents, wineProducts, setWineProducts } = useVinora()
+  const { customers, importRows, events, setEvents, wineProducts, setWineProducts } = useVinora()
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const wineInputRef = useRef<HTMLInputElement>(null)
 
   const processRows = useCallback((rows: RawCsvRow[]) => {
-    const cs = runSegmentation(rows, settings)
-    setCustomers(cs)
-    const regions = [...new Set(cs.map(c => c.wohnort).filter(Boolean))]
-    const updatedEvents = initAutoEvents(events, regions)
-    setEvents(updatedEvents)
-  }, [settings, events, setCustomers, setEvents])
+    importRows(rows)
+    const regions = [...new Set(rows.map(r => (r.Wohnort || '').trim()).filter(Boolean))]
+    setEvents(initAutoEvents(events, regions))
+  }, [importRows, events, setEvents])
 
   function handleFile(file: File) {
     Papa.parse<RawCsvRow>(file, {
@@ -66,7 +65,8 @@ export default function UebersichtPage() {
   const hasData = customers.length > 0
 
   // KPIs
-  const totalClv = customers.reduce((s, c) => s + c.clv, 0)
+  const totalClv = customers.reduce((s, c) => s + (c.clvPrognose ?? c.clv), 0)
+  const risikoUmsatz = customers.reduce((s, c) => s + gefaehrdeterUmsatz(c), 0)
   const sofort = customers.filter(c => c.prioScore >= 100).length
   const frühwarnungen = customers.filter(c => c.risikoSignal !== 'Keins').length
   const upselling = customers.filter(c => c.upsellingSignal !== 'Keins').length
@@ -75,7 +75,7 @@ export default function UebersichtPage() {
   const total = customers.length || 1
 
   // CLV share per segment (for bar visualization)
-  const totalClvAll = customers.reduce((s, c) => s + c.clv, 0) || 1
+  const totalClvAll = customers.reduce((s, c) => s + (c.clvPrognose ?? c.clv), 0) || 1
 
   const kpiContainerVariants = {
     hidden: {},
@@ -180,7 +180,7 @@ export default function UebersichtPage() {
         <>
           {/* KPI Cards */}
           <motion.div
-            className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-6"
+            className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-6"
             variants={kpiContainerVariants}
             initial="hidden"
             animate={customers.length > 0 ? 'visible' : 'hidden'}
@@ -189,7 +189,7 @@ export default function UebersichtPage() {
               <KpiCard icon={<Users size={18} />} label="Kunden gesamt" value={String(customers.length)} color="#6B2737" />
             </motion.div>
             <motion.div variants={kpiCardVariants} whileHover={{ y: -3, transition: { duration: 0.15 } }}>
-              <KpiCard icon={<TrendingUp size={18} />} label="Gesamt CLV" value={fmt(totalClv)} color="#C9A84C" />
+              <KpiCard icon={<TrendingUp size={18} />} label="CLV-Prognose" value={fmt(totalClv)} color="#C9A84C" />
             </motion.div>
             <motion.div variants={kpiCardVariants} whileHover={{ y: -3, transition: { duration: 0.15 } }}>
               <KpiCard icon={<Zap size={18} />} label="Sofort-Aktionen" value={String(sofort)} color="#c0392b" alert={sofort > 0} />
@@ -199,6 +199,9 @@ export default function UebersichtPage() {
             </motion.div>
             <motion.div variants={kpiCardVariants} whileHover={{ y: -3, transition: { duration: 0.15 } }}>
               <KpiCard icon={<ArrowUp size={18} />} label="Upselling" value={String(upselling)} color="#1a56db" />
+            </motion.div>
+            <motion.div variants={kpiCardVariants} whileHover={{ y: -3, transition: { duration: 0.15 } }}>
+              <KpiCard icon={<AlertTriangle size={18} />} label="Umsatz in Gefahr" value={fmt(risikoUmsatz)} color="#8e44ad" alert={risikoUmsatz > totalClv * 0.25} />
             </motion.div>
           </motion.div>
 
@@ -213,7 +216,7 @@ export default function UebersichtPage() {
             >
               {SEGMENTS.map(seg => {
                 const cs = customers.filter(c => c.segment === seg)
-                const clvT = cs.reduce((s, c) => s + c.clv, 0)
+                const clvT = cs.reduce((s, c) => s + (c.clvPrognose ?? c.clv), 0)
                 const avgC = cs.length ? clvT / cs.length : 0
                 const clvPct = Math.round((clvT / totalClvAll) * 100)
                 return (

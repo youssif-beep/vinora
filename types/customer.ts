@@ -86,9 +86,16 @@ export interface Customer {
   mScore: number
   rfmTotal: number
 
+  // Kaufrhythmus – individuell statt globaler Schwellwert
+  kaufintervallTage: number | null   // Median der Abstände zwischen Bestellungen
+  ueberfaelligFaktor: number         // recencyDays / Kaufintervall (1.0 = pünktlich, 2.0 = doppelt so lange weg)
+  naechsterKaufErwartet: Date | null
+  churnRisiko: number                // 0–1, Wahrscheinlichkeit dass der Kunde nicht wiederkommt
+
   // CLV
   kundenjahre: number
-  clv: number
+  clv: number                        // historisch: bisheriger Umsatz pro Jahr, hochgerechnet
+  clvPrognose: number                // prädiktiv: erwarteter Umsatz × Überlebenswahrscheinlichkeit
   clvTier: ClvTier
 
   // Segmentierung
@@ -137,6 +144,20 @@ export interface MarketingAction {
   sentAt: string
   outcome: 'ausstehend' | 'positiv' | 'negativ' | 'keine_reaktion'
   notes?: string
+  // Auswertung
+  abGroup?: AbGroup       // welche Textvariante rausging – Voraussetzung für die A/B-Bilanz
+  campaignId?: string     // Sammelaktion, aus der die Maßnahme stammt
+  revenueBefore?: number  // Umsatz des Kunden zum Zeitpunkt des Versands
+}
+
+/** Sammelaktion: mehrere Kunden mit derselben Maßnahme an einem Tag. */
+export interface Campaign {
+  id: string
+  name: string
+  massnahmenTyp: string
+  createdAt: string
+  customerIds: string[]
+  notiz?: string
 }
 
 export interface VinoraSavedEvent {

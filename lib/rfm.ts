@@ -1,4 +1,4 @@
-import type { Customer, RawCsvRow, OrderItem, Segment, ClvTier, RisikoSignal, UpsellingSignal, WineRecommendation } from '@/types/customer'
+import type { Customer, RawCsvRow, OrderItem, Segment, ClvTier, RisikoSignal, UpsellingSignal, WineRecommendation, WineProduct } from '@/types/customer'
 
 export interface RfmSettings {
   topKundeMin: number
@@ -13,13 +13,19 @@ export interface RfmSettings {
   clvTierABonus: number
   clvTierBBonus: number
   abTestingEnabled: boolean
+  // Kaufrhythmus statt fester Tagesgrenze
+  fruehwarnFaktor: number   // ab dem Wievielfachen des eigenen Kaufintervalls wird gewarnt
+  akutFaktor: number        // ab wann akut
+  // Prognose
+  prognoseJahre: number     // Horizont für den prädiktiven CLV
+  abzinsungProzent: number  // jährliche Abzinsung künftiger Umsätze
 }
 
 export const DEFAULT_SETTINGS: RfmSettings = {
   topKundeMin: 12,
   loyalMin: 9,
-  clvTierAMin: 10000,
-  clvTierBMin: 5000,
+  clvTierAMin: 3000,
+  clvTierBMin: 1000,
   prioGefaehrdet: 100,
   prioTopKunde: 80,
   prioEingeschlafen: 60,
@@ -28,6 +34,10 @@ export const DEFAULT_SETTINGS: RfmSettings = {
   clvTierABonus: 30,
   clvTierBBonus: 15,
   abTestingEnabled: true,
+  fruehwarnFaktor: 1.5,
+  akutFaktor: 2.5,
+  prognoseJahre: 5,
+  abzinsungProzent: 10,
 }
 
 const WINE_MATRIX: Record<string, WineRecommendation[]> = {
@@ -45,6 +55,58 @@ const DEFAULT_WINES: WineRecommendation[] = [
   { id: 'W019', name: 'Riesling', reason: 'Deutschlands Lieblingssorte' },
   { id: 'W020', name: 'Grauburgunder', reason: 'Vielseitiger Begleiter' },
 ]
+
+/**
+ * Empfehlungen aus dem echten Sortiment.
+ * Ohne hochgeladenen Katalog bleibt die Sortenmatrix als Notnagel – mit Katalog
+ * werden nur Weine vorgeschlagen, die das Weingut tatsächlich im Keller hat,
+ * im passenden Preisband (eine Stufe über dem bisherigen Flaschenpreis).
+ */
+export function recommendWines(
+  lieblingssorte: string,
+  gekaufteWeine: Set<string>,
+  avgFlaschenpreis: number,
+  catalog: WineProduct[],
+): WineRecommendation[] {
+  if (!catalog || catalog.length === 0) {
+    return WINE_MATRIX[lieblingssorte] ?? DEFAULT_WINES
+  }
+
+  const verwandte = (WINE_MATRIX[lieblingssorte] ?? DEFAULT_WINES).map(w => w.name.toLowerCase())
+  const ziel = avgFlaschenpreis > 0 ? avgFlaschenpreis * 1.2 : 0
+
+  const bewertet = catalog
+    .filter(w => !gekaufteWeine.has(w.weinname) && !gekaufteWeine.has(w.sorte))
+    .map(w => {
+      const sorte = (w.sorte || '').toLowerCase()
+      let score = 0
+      let grund = ''
+      const verwandtIdx = verwandte.findIndex(v => sorte.includes(v) || v.includes(sorte))
+      if (verwandtIdx === 0)      { score += 60; grund = `Passt zu ${lieblingssorte} – ähnlicher Stil` }
+      else if (verwandtIdx > 0)   { score += 45; grund = `Verwandt mit ${lieblingssorte}` }
+      else if (sorte === lieblingssorte.toLowerCase()) { score += 30; grund = `Anderer Wein der Lieblingssorte` }
+      else                        { score += 10; grund = 'Neue Sorte zum Entdecken' }
+
+      if (ziel > 0 && w.preis > 0) {
+        const abstand = Math.abs(w.preis - ziel) / ziel
+        score += Math.max(0, 25 - abstand * 50)
+        if (w.preis > avgFlaschenpreis * 1.1 && w.preis <= avgFlaschenpreis * 1.6) {
+          score += 10
+          grund += ` · ${fmt(w.preis)} – eine Stufe über dem gewohnten Preis`
+        }
+      }
+      return { w, score, grund }
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+
+  if (bewertet.length === 0) return WINE_MATRIX[lieblingssorte] ?? DEFAULT_WINES
+  return bewertet.map(({ w, grund }) => ({
+    id: w.id,
+    name: w.jahrgang ? `${w.weinname} ${w.jahrgang}` : w.weinname,
+    reason: grund,
+  }))
+}
 
 function parseDate(str: string): Date | null {
   if (!str) return null
@@ -86,16 +148,77 @@ export function getAbGroup(id: string): 'A' | 'B' {
   return Math.abs(h) % 2 === 0 ? 'A' : 'B'
 }
 
-function calcRisikoSignal(c: { segment: Segment; rScore: number; recencyDays: number }): RisikoSignal {
-  if (c.segment === 'Gefährdet') return 'Akut gefährdet'
-  if (c.recencyDays > 365 || c.rScore <= 2) return 'Frühwarnung'
+/**
+ * Median-Abstand zwischen zwei Bestellungen – der eigene Rhythmus des Kunden.
+ * Median statt Mittelwert, damit eine einzelne Großbestellung den Takt nicht verzerrt.
+ */
+export function medianIntervalDays(orders: OrderItem[]): number | null {
+  const dates = orders.map(o => o.date).filter((d): d is Date => !!d).sort((a, b) => a.getTime() - b.getTime())
+  if (dates.length < 2) return null
+  const gaps: number[] = []
+  for (let i = 1; i < dates.length; i++) {
+    gaps.push((dates[i].getTime() - dates[i - 1].getTime()) / 86400000)
+  }
+  gaps.sort((a, b) => a - b)
+  const mid = Math.floor(gaps.length / 2)
+  const median = gaps.length % 2 === 0 ? (gaps[mid - 1] + gaps[mid]) / 2 : gaps[mid]
+  return Math.max(median, 1)
+}
+
+/**
+ * Abwanderungsrisiko aus dem eigenen Rhythmus.
+ * Ein Kunde, der immer im Dezember eine Kiste holt, ist nach 400 Tagen nicht auffällig –
+ * einer, der sonst monatlich bestellt, nach 120 Tagen sehr wohl. Genau das bildet der
+ * Überfälligkeitsfaktor ab: recencyDays geteilt durch das eigene Kaufintervall.
+ */
+export function churnRisiko(ueberfaelligFaktor: number, intervall: number | null, recencyDays: number): number {
+  if (intervall === null) {
+    // Einmalkäufer: kein Rhythmus bekannt, also nur die schlichte Zeitachse
+    return Math.min(0.9, recencyDays / 730)
+  }
+  // Flache Kurve mit Deckel: auch ein lange stiller Kunde ist nicht sicher verloren –
+  // Weinkunden kommen nach einer Pause erfahrungsgemäß zurück.
+  const ueberzug = Math.max(0, ueberfaelligFaktor - 1)
+  return Math.min(0.85, 1 - Math.exp(-0.45 * ueberzug))
+}
+
+/**
+ * Prädiktiver CLV: erwarteter Jahresumsatz × Überlebenswahrscheinlichkeit, abgezinst.
+ * Der historische `clv` (Umsatz/Jahr × 5) gibt einem Kunden mit einer Großbestellung vor
+ * zwei Jahren denselben Wert wie einem aktiven Stammkunden – hier fällt er korrekt ab.
+ */
+export function prognoseClv(
+  jahresumsatz: number, churn: number, jahre: number, abzinsungProzent: number,
+): number {
+  const p = Math.max(0, 1 - churn)
+  const d = 1 + abzinsungProzent / 100
+  let sum = 0
+  for (let t = 1; t <= jahre; t++) {
+    sum += (jahresumsatz * Math.pow(p, t)) / Math.pow(d, t)
+  }
+  return sum
+}
+
+function calcRisikoSignal(
+  c: { segment: Segment; rScore: number; ueberfaelligFaktor: number; kaufintervallTage: number | null; recencyDays: number },
+  settings: RfmSettings,
+): RisikoSignal {
+  if (c.kaufintervallTage === null) {
+    // Einmalkäufer haben keinen Rhythmus – hier bleibt die Zeitachse das einzige Signal
+    if (c.recencyDays > 540) return 'Akut gefährdet'
+    if (c.recencyDays > 270) return 'Frühwarnung'
+    return 'Keins'
+  }
+  if (c.ueberfaelligFaktor >= settings.akutFaktor) return 'Akut gefährdet'
+  if (c.ueberfaelligFaktor >= settings.fruehwarnFaktor) return 'Frühwarnung'
   return 'Keins'
 }
 
-function calcUpsellingSignal(orders: OrderItem[], recencyDays: number): UpsellingSignal {
+function calcUpsellingSignal(orders: OrderItem[], lebensdauerTage: number): UpsellingSignal {
   if (orders.length < 2) return 'Keins'
   const recent90 = orders.filter(o => o.date && (Date.now() - o.date.getTime()) < 90 * 86400000).length
-  const avgPer90 = (orders.length / Math.max(recencyDays, 1)) * 90
+  // Vergleichsmaßstab ist die Kundenlebensdauer, nicht der Abstand zum letzten Kauf
+  const avgPer90 = (orders.length / Math.max(lebensdauerTage, 90)) * 90
   if (recent90 > avgPer90 * 1.5 && recent90 >= 2) return 'Frequenz gestiegen'
   if (orders.length >= 4) {
     const lastAvg = (orders[0].revenue + orders[1].revenue) / 2
@@ -119,7 +242,11 @@ export function getMassnahmenTyp(segment: Segment, clvTier: ClvTier, kundenjahre
   return 'Förderung + Weinprobe'
 }
 
-export function runSegmentation(rows: RawCsvRow[], settings: RfmSettings = DEFAULT_SETTINGS): Customer[] {
+export function runSegmentation(
+  rows: RawCsvRow[],
+  settings: RfmSettings = DEFAULT_SETTINGS,
+  catalog: WineProduct[] = [],
+): Customer[] {
   const today = new Date()
   const map: Record<string, {
     id: string; vorname: string; nachname: string; email: string; wohnort: string
@@ -188,7 +315,23 @@ export function runSegmentation(rows: RawCsvRow[], settings: RfmSettings = DEFAU
     const days = (c.firstOrder && c.lastOrder) ? (c.lastOrder.getTime() - c.firstOrder.getTime()) / 86400000 : 0
     const kundenjahre = Math.max(days / 365, 0.5)
     const clv = (c.totalRevenue / kundenjahre) * 5
-    const clvTier: ClvTier = clv > settings.clvTierAMin ? 'A' : clv > settings.clvTierBMin ? 'B' : 'C'
+
+    // Eigener Kaufrhythmus
+    const kaufintervallTage = medianIntervalDays(c.orders)
+    const ueberfaelligFaktor = kaufintervallTage ? c.recencyDays / kaufintervallTage : 0
+    const naechsterKaufErwartet = (kaufintervallTage && c.lastOrder)
+      ? new Date(c.lastOrder.getTime() + kaufintervallTage * 86400000)
+      : null
+    const churn = churnRisiko(ueberfaelligFaktor, kaufintervallTage, c.recencyDays)
+
+    // Erwarteter Jahresumsatz: bei bekanntem Rhythmus aus Bestellwert × Frequenz,
+    // sonst aus dem bisherigen Durchschnitt
+    const jahresumsatz = kaufintervallTage
+      ? c.durchschnBestellwert * (365 / kaufintervallTage)
+      : c.totalRevenue / kundenjahre
+    const clvPrognose = prognoseClv(jahresumsatz, churn, settings.prognoseJahre, settings.abzinsungProzent)
+
+    const clvTier: ClvTier = clvPrognose > settings.clvTierAMin ? 'A' : clvPrognose > settings.clvTierBMin ? 'B' : 'C'
 
     let segment: Segment
     if      (rfmTotal >= settings.topKundeMin)           segment = 'Top-Kunde'
@@ -205,9 +348,16 @@ export function runSegmentation(rows: RawCsvRow[], settings: RfmSettings = DEFAU
     const prioBase = segBase[segment] ?? settings.prioRest
     const prioScore = prioBase + (clvTier === 'A' ? settings.clvTierABonus : clvTier === 'B' ? settings.clvTierBBonus : 0)
 
-    const risikoSignal = calcRisikoSignal({ segment, rScore: c.rScore, recencyDays: c.recencyDays })
-    const upsellingSignal = calcUpsellingSignal(c.orders, c.recencyDays)
-    const empfohleneWeine = WINE_MATRIX[c.lieblingssorte] ?? DEFAULT_WINES
+    const lebensdauerTage = c.firstOrder ? (today.getTime() - c.firstOrder.getTime()) / 86400000 : 0
+    const risikoSignal = calcRisikoSignal(
+      { segment, rScore: c.rScore, ueberfaelligFaktor, kaufintervallTage, recencyDays: c.recencyDays },
+      settings,
+    )
+    const upsellingSignal = calcUpsellingSignal(c.orders, lebensdauerTage)
+    const flaschenGesamt = c.orders.reduce((sum, o) => sum + (o.flaschen || 0), 0)
+    const avgFlaschenpreis = flaschenGesamt > 0 ? c.totalRevenue / flaschenGesamt : 0
+    const gekaufteWeine = new Set(c.orders.flatMap(o => [o.weinBase, o.weinRaw]).filter(Boolean))
+    const empfohleneWeine = recommendWines(c.lieblingssorte, gekaufteWeine, avgFlaschenpreis, catalog)
     const massnahmenTyp = getMassnahmenTyp(segment, clvTier, kundenjahre)
     const abGroup = getAbGroup(c.id)
 
@@ -218,7 +368,8 @@ export function runSegmentation(rows: RawCsvRow[], settings: RfmSettings = DEFAU
       lieblingssorte: c.lieblingssorte, bevKanal: c.bevKanal, kaufsaison: c.kaufsaison,
       durchschnBestellwert: c.durchschnBestellwert,
       rScore: c.rScore, fScore: c.fScore, mScore: c.mScore, rfmTotal,
-      kundenjahre, clv, clvTier, segment, prioScore,
+      kaufintervallTage, ueberfaelligFaktor, naechsterKaufErwartet, churnRisiko: churn,
+      kundenjahre, clv, clvPrognose, clvTier, segment, prioScore,
       risikoSignal, upsellingSignal, empfohleneWeine,
       massnahmenTyp, abGroup,
     } satisfies Customer

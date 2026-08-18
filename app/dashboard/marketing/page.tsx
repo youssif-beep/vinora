@@ -5,9 +5,12 @@ import { useVinora } from '@/lib/store'
 import { fmt, SEGMENT_COLORS, SEGMENT_TEXT_COLORS } from '@/lib/rfm'
 import type { Customer, MarketingAction, Segment } from '@/types/customer'
 import { motion, AnimatePresence } from 'framer-motion'
+import { KampagnenPanel } from '@/components/kampagnen-panel'
+import { AuswertungPanel } from '@/components/auswertung-panel'
+import { massnahmenWirkung } from '@/lib/analytics'
 import {
   Sparkles, CheckCircle, Clock, XCircle, Minus, Send, TrendingUp,
-  AlertTriangle, Copy, ChevronDown, BarChart2, RefreshCw, Filter,
+  AlertTriangle, Copy, ChevronDown, BarChart2, RefreshCw, Filter, Megaphone,
 } from 'lucide-react'
 
 type OutcomeKey = 'positiv' | 'negativ' | 'keine_reaktion' | 'ausstehend'
@@ -17,15 +20,6 @@ const OUTCOME_LABELS: Record<OutcomeKey, { label: string; icon: React.ReactNode;
   positiv:        { label: 'Positiv',        icon: <CheckCircle size={13} />, color: '#27ae60', bg: '#E8F8F1' },
   negativ:        { label: 'Negativ',        icon: <XCircle size={13} />,     color: '#c0392b', bg: '#FDECEA' },
   keine_reaktion: { label: 'Keine Reaktion', icon: <Minus size={13} />,       color: '#8B6070', bg: '#F2ECF0' },
-}
-
-const MASSNAHMEN_SUCCESS_RATES: Record<string, number> = {
-  'Persönliche Einladung': 82, 'VIP-Angebot': 74, 'Treue-Anerkennung': 68,
-  'Cross-Sell Empfehlung': 71, 'Newsletter + Rabatt': 58, 'Sofort: Persönlicher Anruf': 88,
-  'Reaktivierung mit Probe': 65, 'Persönliche Reaktivierung': 79, 'Reaktivierung mit Rabatt': 61,
-  'Kundenbindung aufbauen': 54, 'Förderung + Weinprobe': 63, 'Persönlicher Anruf': 85,
-  'WhatsApp Nachricht': 72, 'Handgeschriebene Postkarte': 76, 'VIP Event Einladung': 81,
-  'Weinprobe zu Hause': 77,
 }
 
 const MASSNAHMEN_TYPES = [
@@ -117,7 +111,7 @@ export default function MarketingPage() {
   const [aiText, setAiText] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
-  const [activeTab, setActiveTab] = useState<'workflow' | 'feedback'>('workflow')
+  const [activeTab, setActiveTab] = useState<'workflow' | 'kampagnen' | 'feedback' | 'auswertung'>('workflow')
   const [segmentFilter, setSegmentFilter] = useState<Segment | 'Alle'>('Alle')
   const [selectedMassnahmenTyp, setSelectedMassnahmenTyp] = useState<string>('')
   const [cardOverrides, setCardOverrides] = useState<Record<string, string>>({})
@@ -129,6 +123,8 @@ export default function MarketingPage() {
     setToastMessage(msg); setToastVisible(true)
     setTimeout(() => setToastVisible(false), 2500)
   }, [])
+
+  const wirkung = massnahmenWirkung(actions, customers)
 
   const prioritized = [...customers].sort((a, b) => b.prioScore - a.prioScore).slice(0, 20)
     .filter(c => segmentFilter === 'Alle' || c.segment === segmentFilter)
@@ -145,6 +141,8 @@ export default function MarketingPage() {
           segment: c.segment, clvTier: c.clvTier, lieblingssorte: c.lieblingssorte,
           recencyDays: c.recencyDays, orderCount: c.orderCount,
           totalRevenue: Math.round(c.totalRevenue), massnahmenTyp,
+          kaufintervallTage: c.kaufintervallTage, churnRisiko: c.churnRisiko,
+          clvPrognose: c.clvPrognose, empfohleneWeine: c.empfohleneWeine,
         }),
       })
       const data = await res.json()
@@ -180,6 +178,7 @@ export default function MarketingPage() {
       id: `${c.id}_${Date.now()}`, customerId: c.id, customerName: `${c.vorname} ${c.nachname}`,
       massnahmenTyp, segment: c.segment, clvTier: c.clvTier,
       sentAt: new Date().toISOString(), outcome: 'ausstehend',
+      abGroup: c.abGroup, revenueBefore: c.totalRevenue,
     }
     setActions([...actions, newAction])
     showToast(`${c.vorname} ${c.nachname} als gesendet markiert`)
@@ -229,7 +228,12 @@ export default function MarketingPage() {
       </div>
 
       <div className="flex gap-1 mb-6 bg-[#F0EDE6] p-1 rounded-xl w-fit">
-        {[{ key: 'workflow', label: 'Workflow', icon: <Sparkles size={14} /> }, { key: 'feedback', label: 'Feedback-Loop', icon: <TrendingUp size={14} /> }].map(({ key, label, icon }) => (
+        {[
+          { key: 'workflow', label: 'Workflow', icon: <Sparkles size={14} /> },
+          { key: 'kampagnen', label: 'Kampagnen', icon: <Megaphone size={14} /> },
+          { key: 'feedback', label: 'Feedback-Loop', icon: <Clock size={14} /> },
+          { key: 'auswertung', label: 'Auswertung', icon: <TrendingUp size={14} /> },
+        ].map(({ key, label, icon }) => (
           <button key={key} onClick={() => setActiveTab(key as typeof activeTab)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-all"
             style={activeTab === key ? { background: 'white', color: '#6B2737', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' } : { color: '#8B6070' }}>
@@ -384,10 +388,22 @@ export default function MarketingPage() {
                             </div>
                           </div>
                         )}
-                        <div className="flex items-center gap-3 px-3 py-2 rounded-lg mb-4" style={{ background: '#F5F0FA', border: '1px solid #E0D5F0' }}>
-                          <BarChart2 size={14} style={{ color: '#6B2737', flexShrink: 0 }} />
-                          <span className="text-xs text-[#6B4A55]">Ø Erfolgsrate für <span className="font-semibold" style={{ color: '#6B2737' }}>{selectedMassnahmenTyp || selected.massnahmenTyp}</span>{': '}<span className="font-bold" style={{ color: '#27ae60' }}>{MASSNAHMEN_SUCCESS_RATES[selectedMassnahmenTyp || selected.massnahmenTyp] ?? 65}%</span></span>
-                        </div>
+                        {(() => {
+                          const typ = selectedMassnahmenTyp || selected.massnahmenTyp
+                          const w = wirkung.find(x => x.massnahmenTyp === typ)
+                          return (
+                            <div className="flex items-center gap-3 px-3 py-2 rounded-lg mb-4" style={{ background: '#F5F0FA', border: '1px solid #E0D5F0' }}>
+                              <BarChart2 size={14} style={{ color: '#6B2737', flexShrink: 0 }} />
+                              <span className="text-xs text-[#6B4A55]">
+                                {w && w.bewertet > 0
+                                  ? <>Im eigenen Betrieb gemessen für <span className="font-semibold" style={{ color: '#6B2737' }}>{typ}</span>{': '}
+                                      <span className="font-bold" style={{ color: '#27ae60' }}>{Math.round(w.quote * 100)} %</span>
+                                      <span className="text-[#8B6070]"> ({w.positiv} von {w.bewertet} Rückmeldungen)</span></>
+                                  : <>Für <span className="font-semibold" style={{ color: '#6B2737' }}>{typ}</span> liegen noch keine eigenen Rückmeldungen vor – Ergebnisse im Feedback-Loop eintragen.</>}
+                              </span>
+                            </div>
+                          )
+                        })()}
                       </div>
                     ) : null}
                     <div className="mt-4 flex gap-2">
@@ -426,6 +442,10 @@ export default function MarketingPage() {
             </AnimatePresence>
           </div>
         </div>
+      ) : activeTab === 'kampagnen' ? (
+        <KampagnenPanel onToast={showToast} />
+      ) : activeTab === 'auswertung' ? (
+        <AuswertungPanel />
       ) : (
         <div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">

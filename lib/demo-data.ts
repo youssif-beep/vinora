@@ -1,6 +1,11 @@
 import type { RawCsvRow } from '@/types/customer'
 
-export const DEMO_ROWS: RawCsvRow[] = [
+/**
+ * Fester Beispieldatensatz. Die Kaufdaten sind als Festdatum notiert und werden
+ * beim Laden so verschoben, dass die jüngste Bestellung rund drei Wochen zurückliegt –
+ * sonst wären die Beispielkunden je nach Kalenderjahr sämtlich „überfällig".
+ */
+const DEMO_ROWS_STATISCH: RawCsvRow[] = [
   { 'Customer ID': 'K001', Vorname: 'Hans', Nachname: 'Müller', Email: 'hans.mueller@email.de', Kaufdatum: '15.03.2024', Wein: 'Riesling 2022', Anzahl_Flaschen: '6', Gesamtpreis_EUR: '89.50', Weg_der_Bestellung: 'Besuch', Wohnort: 'Stuttgart' },
   { 'Customer ID': 'K001', Vorname: 'Hans', Nachname: 'Müller', Email: 'hans.mueller@email.de', Kaufdatum: '12.07.2024', Wein: 'Riesling 2023', Anzahl_Flaschen: '12', Gesamtpreis_EUR: '178.00', Weg_der_Bestellung: 'Besuch', Wohnort: 'Stuttgart' },
   { 'Customer ID': 'K001', Vorname: 'Hans', Nachname: 'Müller', Email: 'hans.mueller@email.de', Kaufdatum: '20.11.2024', Wein: 'Grauburgunder 2022', Anzahl_Flaschen: '6', Gesamtpreis_EUR: '95.00', Weg_der_Bestellung: 'Besuch', Wohnort: 'Stuttgart' },
@@ -26,3 +31,27 @@ export const DEMO_ROWS: RawCsvRow[] = [
   { 'Customer ID': 'K010', Vorname: 'Christine', Nachname: 'Schulz', Email: 'c.schulz@gmail.com', Kaufdatum: '12.02.2025', Wein: 'Dornfelder 2023', Anzahl_Flaschen: '6', Gesamtpreis_EUR: '72.00', Weg_der_Bestellung: 'Email', Wohnort: 'München' },
   { 'Customer ID': 'K010', Vorname: 'Christine', Nachname: 'Schulz', Email: 'c.schulz@gmail.com', Kaufdatum: '28.02.2025', Wein: 'Spätburgunder 2022', Anzahl_Flaschen: '3', Gesamtpreis_EUR: '71.00', Weg_der_Bestellung: 'Email', Wohnort: 'München' },
 ]
+
+const TAG_MS = 86400000
+
+function parseDeutschesDatum(str: string): Date {
+  const [d, m, y] = str.split('.')
+  return new Date(+y, +m - 1, +d)
+}
+
+function formatiereDeutschesDatum(d: Date): string {
+  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`
+}
+
+function verschiebeAufHeute(rows: RawCsvRow[]): RawCsvRow[] {
+  const zeitpunkte = rows.map(r => parseDeutschesDatum(r.Kaufdatum).getTime())
+  const juengste = Math.max(...zeitpunkte)
+  const versatz = Date.now() - 21 * TAG_MS - juengste
+  if (versatz <= 0) return rows
+  return rows.map(r => ({
+    ...r,
+    Kaufdatum: formatiereDeutschesDatum(new Date(parseDeutschesDatum(r.Kaufdatum).getTime() + versatz)),
+  }))
+}
+
+export const DEMO_ROWS: RawCsvRow[] = verschiebeAufHeute(DEMO_ROWS_STATISCH)
